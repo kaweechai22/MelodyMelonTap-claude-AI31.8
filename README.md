@@ -98,3 +98,10 @@ Clean rebuild: ตัดโค้ดซ้ำ/โค้ดเก่า/เอฟ
 - มีโพรงมาก: hollowPercent >= 18
 - เพิ่มปุ่ม "ทดสอบเสียงเตือน" ใกล้ Debug
 - เพิ่มระดับเสียง beep ให้ชัดขึ้น
+
+
+## v25 Ripeness AI
+- แยกโมเดลระดับสุกออกมาเป็น Ripeness-only AI classifier
+- เทรนจากข้อมูล field-test 210 ตัวอย่าง
+- ใช้ acoustic features เป็นหลัก: centroid, band energy, peak count, rolloff, peak2 ratio
+- คาดว่า CV accuracy ~73% เทียบกับ current app ~52.6%
