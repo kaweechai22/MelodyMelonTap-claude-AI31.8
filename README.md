@@ -1,23 +1,20 @@
-MelodyMelonTap v2.31.4 Clean Peak Detection
+MelodyMelonTap v2.31.5 Soft Peak Detection
+
+เหตุผลของเวอร์ชันนี้:
+- v2.31.4 ตั้ง Clean Peak Detection เข้มเกินไปในภาคสนาม ทำให้บางเครื่องจับเสียงเคาะได้แค่ 1 ครั้ง
+- v2.31.5 ปรับเป็น soft gate: รับเสียงเคาะไว้ก่อน แล้วค่อยลดคะแนน/เตือน แทนการตัดทิ้งทันที
 
 สิ่งที่ปรับ:
-1. เพิ่มระบบคัด peak ที่ชัดจริงก่อนส่งเข้าโมเดล
-   - ใช้ช่วงความถี่ clean peak 120–750 Hz
-   - peak ต้องเด่นกว่าพื้นเสียงอย่างน้อย 8 dB
-2. ถ้าเสียงเคาะไม่ชัด จะไม่รับเป็น 1 ครั้ง และให้เคาะใหม่
-3. ตรวจความนิ่งหลังเคาะครบ 3 ครั้ง
-   - valid_peak_count ต้องไม่น้อยกว่า 2
-   - f_peak_spread ต้องไม่เกิน 80 Hz
-4. ปรับ boundary retest ให้ครบกลุ่ม B
-   - boundaries = 250, 350, 600, 700 Hz
-   - ใช้ adaptive band: ±15 / ±20 / ±30 Hz ตามคุณภาพสัญญาณ
-5. เพิ่มข้อมูลลง CSV/debug
-   - valid_peak_count
-   - peak_prominence_db
-   - f_peak_spread
-   - clean_peak_status
-   - clean_peak_min_hz / clean_peak_max_hz
-   - boundary_band_v2314
-6. คง Critical Accuracy Patch และ Reset To Home จากเวอร์ชันก่อนหน้าไว้
+1. ขยายช่วง clean peak จาก 120–750 Hz เป็น 90–850 Hz
+2. ลดเกณฑ์ peak prominence จาก 8 dB เป็น 5 dB
+3. ไม่ return null ทันทีเมื่อ peak ไม่ผ่านเกณฑ์
+   - ยังรับเป็นเสียงเคาะ
+   - บันทึก cleanPeakValid / peak_prominence_db / clean_peak_status ไว้ใน CSV
+   - ใช้เตือนหรือหักคะแนนแทน
+4. ปรับ shouldRetry ให้นุ่มขึ้น
+   - ไม่บังคับ valid_peak_count >= 2 เป็นเงื่อนไขตัดผล
+   - ตัดผลเฉพาะกรณีสัญญาณต่ำมาก หรือ f_peak แกว่งมากจริง
+5. คงระบบ boundary 250/350/600/700 และ adaptive band ไว้
+6. คง Critical Accuracy Patch, Icon Sync และ Reset To Home ไว้ครบ
 
-ฐานจาก v2.31.3
+ฐานจาก v2.31.4

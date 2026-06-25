@@ -2930,9 +2930,9 @@ function loop(){
   rafId = requestAnimationFrame(loop);
 }
 
-const CLEAN_PEAK_MIN_HZ_V2314 = 120;
-const CLEAN_PEAK_MAX_HZ_V2314 = 750;
-const CLEAN_PEAK_PROMINENCE_DB_MIN_V2314 = 8;
+const CLEAN_PEAK_MIN_HZ_V2314 = 90;
+const CLEAN_PEAK_MAX_HZ_V2314 = 850;
+const CLEAN_PEAK_PROMINENCE_DB_MIN_V2314 = 5;
 
 function medianFiniteV2314(values){
   const vals = values.filter(Number.isFinite).sort((a,b)=>a-b);
@@ -2942,9 +2942,11 @@ function medianFiniteV2314(values){
 }
 
 function cleanPeakStatusTextV2314(validPeakCount, fPeakSpread, peakProminenceDb){
-  if(validPeakCount < 2) return "peakไม่ชัด";
-  if(fPeakSpread > 80) return "ความถี่แกว่ง";
-  if(safe(peakProminenceDb,0) < CLEAN_PEAK_PROMINENCE_DB_MIN_V2314) return "peakเด่นไม่พอ";
+  // v2.31.5: ใช้เป็นคำเตือน ไม่ใช่เกณฑ์ตัดการวัดทันที
+  if(fPeakSpread > 120) return "ความถี่แกว่งมาก";
+  if(fPeakSpread > 90) return "ความถี่แกว่ง";
+  if(safe(peakProminenceDb,0) < 3) return "peakเด่นต่ำ";
+  if(validPeakCount < 2) return "peakไม่ค่อยชัด";
   return "ใช้ได้";
 }
 
@@ -3005,15 +3007,14 @@ function extractFeaturesFromEvent(frames){
     .map(idx => mags[idx]);
   const noiseFloor = Math.max(1e-12, medianFiniteV2314(noiseMags));
   const peakProminenceDb = 20 * Math.log10(Math.max(1e-12, peak) / noiseFloor);
+  // v2.31.5: soft gate
+  // ไม่ตัดเสียงทิ้งทันที เพราะภาคสนามพบว่าบางมือถือ/บางตำแหน่งเคาะ peak ไม่เด่นพอ
+  // ให้รับเสียงไว้ก่อน แต่บันทึก cleanPeakValid และลดคะแนนสัญญาณแทน
   const cleanPeakValid = (
     fPeak >= CLEAN_PEAK_MIN_HZ_V2314 &&
     fPeak <= CLEAN_PEAK_MAX_HZ_V2314 &&
     peakProminenceDb >= CLEAN_PEAK_PROMINENCE_DB_MIN_V2314
   );
-
-  if(!cleanPeakValid){
-    return null;
-  }
 
   const target = peak / Math.sqrt(2);
   let l=peakIdx; while(l>0 && mags[l] >= target) l--;
@@ -3402,8 +3403,8 @@ function analyzeSession(){
   const consistency=clamp(100-qSpread*2.2-tauSpread*55-fPeakSpread*.035,35,98);
   let plaus=92;if(group==="A")plaus-=10;if(hollowPercent>20)plaus-=10;if(tauFallbackCount>=4)plaus-=10;if(sigScore<45)plaus-=12;
   const conf=clamp(.45*sigScore+.35*consistency+.20*plaus,20,95);
-  const shouldRetry = (sigScore < 35) || (tapFeatures.length < 3) || (validPeakCount < 2) || (fPeakSpread > 80) || (qSpread > 35 && sigScore < 50);
-  const warnLowQuality = (conf < 58) || (sigScore < 55) || (qSpread > 18) || (tauFallbackCount >= 4);
+  const shouldRetry = (sigScore < 30) || (tapFeatures.length < 3) || (fPeakSpread > 140) || (qSpread > 45 && sigScore < 45);
+  const warnLowQuality = (conf < 58) || (sigScore < 55) || (qSpread > 18) || (tauFallbackCount >= 4) || (cleanPeakStatus !== "ใช้ได้");
   if(shouldRetry){showRetry(conf,sigLabel,sigScore,qSpread,tauSpread,tauFallbackCount);return;}
 
   const sweetStars=toStars(brix,8,14), firmStars=toStars(crispPct,0,100), juiceStars=toStars(juice,50,86), hollowStars=5-toStars(hollowPercent,0,35), confStars=toStars(conf,25,95);
@@ -3582,7 +3583,7 @@ function analyzeSession(){
     q_spread: Number(qSpread.toFixed(3)),
     tau_fallback_count: tauFallbackCount,
     measurement_status: (warnLowQuality || cleanPeakStatus !== "ใช้ได้") ? "ควรวัดซ้ำ" : "ใช้ได้",
-    model_version: "v2.31.4_CleanPeakDetection",
+    model_version: "v2.31.5_SoftPeakDetection",
     boundary_ripeness_zone: isBoundaryRipeness
   });
 
