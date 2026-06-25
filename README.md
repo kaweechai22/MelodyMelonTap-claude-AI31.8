@@ -1,16 +1,23 @@
-MelodyMelonTap v2.31.1 Critical Accuracy Patch
+MelodyMelonTap v2.31.4 Clean Peak Detection
 
 สิ่งที่ปรับ:
-1. แก้บั๊ก classifyRipenessGroupV1() ที่ทำให้กลุ่ม B = สุกเกิน ไม่มีทางถูกเลือก
-   - เพิ่มช่วง f_peak 250–349 Hz ให้คืนค่า B = สุกเกิน
-   - ต่ำกว่า 250 Hz ยังเป็น A = อาจเน่า
-2. แก้ classifyRipenessAI120() ที่มี key "อาจเน่า" ซ้ำ
-   - เปลี่ยนคะแนนชุดที่สองเป็น "สุกเกิน"
-3. เพิ่ม debug/CSV เปรียบเทียบ rule-based group กับ Audio120 group
-   - rule_group_v2311
-   - audio120_group_v2311
-   - rule_vs_audio120_v2311
-4. ยังไม่เปลี่ยน AI120 เป็นตัวตัดสินหลัก
-5. ยังไม่แตะระบบไมค์/ระบบนับเคาะ/โครงสร้างไฟล์ เพื่อลดความเสี่ยง
+1. เพิ่มระบบคัด peak ที่ชัดจริงก่อนส่งเข้าโมเดล
+   - ใช้ช่วงความถี่ clean peak 120–750 Hz
+   - peak ต้องเด่นกว่าพื้นเสียงอย่างน้อย 8 dB
+2. ถ้าเสียงเคาะไม่ชัด จะไม่รับเป็น 1 ครั้ง และให้เคาะใหม่
+3. ตรวจความนิ่งหลังเคาะครบ 3 ครั้ง
+   - valid_peak_count ต้องไม่น้อยกว่า 2
+   - f_peak_spread ต้องไม่เกิน 80 Hz
+4. ปรับ boundary retest ให้ครบกลุ่ม B
+   - boundaries = 250, 350, 600, 700 Hz
+   - ใช้ adaptive band: ±15 / ±20 / ±30 Hz ตามคุณภาพสัญญาณ
+5. เพิ่มข้อมูลลง CSV/debug
+   - valid_peak_count
+   - peak_prominence_db
+   - f_peak_spread
+   - clean_peak_status
+   - clean_peak_min_hz / clean_peak_max_hz
+   - boundary_band_v2314
+6. คง Critical Accuracy Patch และ Reset To Home จากเวอร์ชันก่อนหน้าไว้
 
-ฐานจาก v2.31.0
+ฐานจาก v2.31.3

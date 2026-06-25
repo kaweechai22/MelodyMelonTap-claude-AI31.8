@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>MelodyMelonTap v2.31.1 Critical Accuracy Patch</title><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.png"/><meta name="theme-color" content="#df1f2d"/><style>
+<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>MelodyMelonTap v2.31.2 Icon Synced</title><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.png"/><meta name="theme-color" content="#df1f2d"/><style>
 :root{
   --theme:#df1f2d; --theme2:#ff4d5e; --soft:#fff1f2; --soft2:#ffe4e6;
   --ink:#1f2933; --muted:#6b7280; --card:#ffffff; --line:#eceff3;
@@ -2617,15 +2617,24 @@ function classifyRipenessGroupV1(avgPeakFreq){
   if(f >= 250) return "B";                // สุกเกิน
   return "A";                             // อาจเน่า
 }
-function getV1BoundaryClarity(avgPeakFreq){
+function getV1BoundaryClarity(avgPeakFreq, sigScore=65, qSpread=12){
   const f = safe(avgPeakFreq, 0);
-  const boundaries = [350,600,700];
+  // v2.31.4: เพิ่ม boundary 250Hz หลังเติมกลุ่ม B = สุกเกิน
+  const boundaries = [250,350,600,700];
   const nearest = boundaries.reduce((best,b)=>{const d=Math.abs(f-b);return d<best.distance?{boundary:b,distance:d}:best;},{boundary:null,distance:Infinity});
-  const needRetest = nearest.distance <= 25;
+
+  // Adaptive boundary band:
+  // สัญญาณดีมากและเคาะนิ่ง → เตือนแคบลง, สัญญาณไม่นิ่ง → เตือนกว้างขึ้น
+  let band = 20;
+  if(safe(sigScore,65) < 55 || safe(qSpread,12) > 18) band = 30;
+  else if(safe(sigScore,65) > 75 && safe(qSpread,12) < 10) band = 15;
+
+  const needRetest = nearest.distance <= band;
   return {
     needRetest,
     boundary: nearest.boundary,
     distance: nearest.distance,
+    band,
     text: needRetest ? "⚠ ควรเคาะซ้ำเพื่อยืนยันอีกครั้ง" : "✓ ผลวิเคราะห์ชัดเจน",
     cls: needRetest ? "clarityBadge clarity-warn" : "clarityBadge clarity-ok"
   };
@@ -2921,6 +2930,24 @@ function loop(){
   rafId = requestAnimationFrame(loop);
 }
 
+const CLEAN_PEAK_MIN_HZ_V2314 = 120;
+const CLEAN_PEAK_MAX_HZ_V2314 = 750;
+const CLEAN_PEAK_PROMINENCE_DB_MIN_V2314 = 8;
+
+function medianFiniteV2314(values){
+  const vals = values.filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!vals.length) return NaN;
+  const mid = Math.floor(vals.length/2);
+  return vals.length % 2 ? vals[mid] : (vals[mid-1]+vals[mid])/2;
+}
+
+function cleanPeakStatusTextV2314(validPeakCount, fPeakSpread, peakProminenceDb){
+  if(validPeakCount < 2) return "peakไม่ชัด";
+  if(fPeakSpread > 80) return "ความถี่แกว่ง";
+  if(safe(peakProminenceDb,0) < CLEAN_PEAK_PROMINENCE_DB_MIN_V2314) return "peakเด่นไม่พอ";
+  return "ใช้ได้";
+}
+
 function extractFeaturesFromEvent(frames){
   if(!frames || frames.length < 6) return null;
   const sr = audioContext.sampleRate;
@@ -2954,10 +2981,40 @@ function extractFeaturesFromEvent(frames){
   const sum = mags.reduce((a,b)=>a+b,0);
   if(sum <= 1e-9) return null;
 
-  let peakIdx=0;
-  for(let i=1;i<mags.length;i++) if(mags[i] > mags[peakIdx]) peakIdx = i;
+  // v2.31.4 Clean Peak Detection:
+  // เลือก peak หลักเฉพาะช่วงที่น่าเชื่อถือ เพื่อลดเสียงมือ/ลม/ฮาร์มอนิกหลอก
+  const cleanCandidates = [];
+  for(let i=0;i<mags.length;i++){
+    if(freqs[i] >= CLEAN_PEAK_MIN_HZ_V2314 && freqs[i] <= CLEAN_PEAK_MAX_HZ_V2314){
+      cleanCandidates.push(i);
+    }
+  }
+  if(!cleanCandidates.length) return null;
+
+  let peakIdx=cleanCandidates[0];
+  for(const idx of cleanCandidates){
+    if(mags[idx] > mags[peakIdx]) peakIdx = idx;
+  }
+
   const fPeak = safe(freqs[peakIdx], getFallback("fPeak"));
   const peak = mags[peakIdx];
+
+  // noise floor ใช้ median ของช่วง clean band โดยตัดบริเวณรอบ peak ออก
+  const noiseMags = cleanCandidates
+    .filter(idx => Math.abs(idx-peakIdx) > 3)
+    .map(idx => mags[idx]);
+  const noiseFloor = Math.max(1e-12, medianFiniteV2314(noiseMags));
+  const peakProminenceDb = 20 * Math.log10(Math.max(1e-12, peak) / noiseFloor);
+  const cleanPeakValid = (
+    fPeak >= CLEAN_PEAK_MIN_HZ_V2314 &&
+    fPeak <= CLEAN_PEAK_MAX_HZ_V2314 &&
+    peakProminenceDb >= CLEAN_PEAK_PROMINENCE_DB_MIN_V2314
+  );
+
+  if(!cleanPeakValid){
+    return null;
+  }
+
   const target = peak / Math.sqrt(2);
   let l=peakIdx; while(l>0 && mags[l] >= target) l--;
   let r=peakIdx; while(r<mags.length-1 && mags[r] >= target) r++;
@@ -3016,16 +3073,26 @@ function extractFeaturesFromEvent(frames){
     }
   }
 
-  const quality = assessSignalQuality({Q,bw,fPeak,tau,tauWasFallback,totalEnergy});
+  const quality = assessSignalQuality({Q,bw,fPeak,tau,tauWasFallback,totalEnergy,peakProminenceDb,cleanPeakValid});
   return {fPeak,Q,tau,fMean,fStd,fVar,hollow,bw,highRatio,lowRatio,midRatio,flatness,
           band50100,band100150,band150300,band300600,band6001000,
           centroid:fMean,rolloff85,rolloff95,peakCount,peak2Ratio,peak2Freq,
-          attackTime,decayRatio,quality,tauWasFallback};
+          attackTime,decayRatio,quality,tauWasFallback,
+          peakProminenceDb,cleanPeakValid,
+          cleanPeakMinHz:CLEAN_PEAK_MIN_HZ_V2314,
+          cleanPeakMaxHz:CLEAN_PEAK_MAX_HZ_V2314};
 }
 
 function assessSignalQuality(feat){
-  let score=100;if(!Number.isFinite(feat.Q)||feat.Q<=0)score-=35;if(!Number.isFinite(feat.bw)||feat.bw<3||feat.bw>250)score-=20;if(!Number.isFinite(feat.tau)||feat.tau<=0)score-=20;if(feat.fPeak<60||feat.fPeak>950)score-=12;if(feat.tauWasFallback)score-=12;
-  score=clamp(score,0,100);return{score,label:score>=75?"สัญญาณดี":score>=50?"สัญญาณปานกลาง":"สัญญาณอ่อน",cls:score>=75?"good":score>=50?"mid":"bad"};
+  let score=100;
+  if(!Number.isFinite(feat.Q)||feat.Q<=0) score-=35;
+  if(!Number.isFinite(feat.bw)||feat.bw<3||feat.bw>250) score-=20;
+  if(!Number.isFinite(feat.tau)||feat.tau<=0) score-=20;
+  if(feat.fPeak<CLEAN_PEAK_MIN_HZ_V2314||feat.fPeak>CLEAN_PEAK_MAX_HZ_V2314) score-=18;
+  if(safe(feat.peakProminenceDb,0) < CLEAN_PEAK_PROMINENCE_DB_MIN_V2314) score-=18;
+  if(feat.tauWasFallback) score-=12;
+  score=clamp(score,0,100);
+  return{score,label:score>=75?"สัญญาณดี":score>=50?"สัญญาณปานกลาง":"สัญญาณอ่อน",cls:score>=75?"good":score>=50?"mid":"bad"};
 }
 
 
@@ -3257,9 +3324,13 @@ function updateClarityBadgeV250(clarity){
 }
 
 function analyzeSession(){
-  const avg={};["fPeak","Q","tau","fMean","fStd","fVar","hollow","bw","highRatio","lowRatio","flatness","band50100","band100150","band150300","band300600","band6001000","centroid","rolloff85","rolloff95","peakCount","peak2Ratio","attackTime","decayRatio"].forEach(k=>{avg[k]=trimmedMean(tapFeatures.map(t=>t[k]));if(!Number.isFinite(avg[k]))avg[k]=getFallback(k);});
+  const avg={};["fPeak","Q","tau","fMean","fStd","fVar","hollow","bw","highRatio","lowRatio","flatness","band50100","band100150","band150300","band300600","band6001000","centroid","rolloff85","rolloff95","peakCount","peak2Ratio","attackTime","decayRatio","peakProminenceDb"].forEach(k=>{avg[k]=trimmedMean(tapFeatures.map(t=>t[k]));if(!Number.isFinite(avg[k]))avg[k]=getFallback(k);});
   const qScores=tapFeatures.map(t=>t.quality?.score??50), sigScore=trimmedMean(qScores);
   const sigLabel=sigScore>=75?"สัญญาณดี":sigScore>=50?"สัญญาณปานกลาง":"สัญญาณอ่อน", sigCls=sigScore>=75?"good":sigScore>=50?"mid":"bad";setSignalQuality(sigLabel,sigCls);
+  const qSpread=spread(tapFeatures.map(t=>t.Q)), tauSpread=spread(tapFeatures.map(t=>t.tau)), fPeakSpread=spread(tapFeatures.map(t=>t.fPeak));
+  const validPeakCount=tapFeatures.filter(t=>t.cleanPeakValid).length;
+  const peakProminenceDb=safe(trimmedMean(tapFeatures.map(t=>t.peakProminenceDb)),0);
+  const cleanPeakStatus=cleanPeakStatusTextV2314(validPeakCount,fPeakSpread,peakProminenceDb);
   const tauFallbackCount=tapFeatures.filter(t=>t.tauWasFallback).length;
   const tauUsed=tauFallbackCount>=3?getFallback("tau"):safe(avg.tau,getFallback("tau"));
   const Quse=safe(avg.Q,getFallback("Q")), fMeanUse=safe(avg.fMean,getFallback("fMean")), fStdUse=safe(avg.fStd,getFallback("fStd")), fVarUse=safe(avg.fVar,getFallback("fVar")), hollowIndexUse=safe(avg.hollow,getFallback("hollow"));
@@ -3288,7 +3359,7 @@ function analyzeSession(){
   const ai120GroupV2311 = ripenessLabelToGroupV2311(ripenessLabel120);
   const groupAgreementV2311 = ai120GroupV2311 ? (ai120GroupV2311 === ruleGroupV2311 ? "match" : "mismatch") : "n/a";
   const ripenessExtraNoteV248 = `V1 engine: avgPeakFreq=${avgPeakFreqV1.toFixed(1)} Hz`;
-  const clarityV250 = getV1BoundaryClarity(avgPeakFreqV1);
+  const clarityV250 = getV1BoundaryClarity(avgPeakFreqV1, sigScore, qSpread);
 
   // Recalibrate hollow after final ripeness group is known
   const hollowPercentField = calibrateHollowFieldV226(hollowRawPercent, hollowPercent, group);
@@ -3328,11 +3399,10 @@ function analyzeSession(){
 
   const crispPct=crispPercent(firmness), crispText=crispLabel(crispPct), hollowText=hollowDisplayLabel(hollowPercent);
 
-  const qSpread=spread(tapFeatures.map(t=>t.Q)), tauSpread=spread(tapFeatures.map(t=>t.tau)), fPeakSpread=spread(tapFeatures.map(t=>t.fPeak));
   const consistency=clamp(100-qSpread*2.2-tauSpread*55-fPeakSpread*.035,35,98);
   let plaus=92;if(group==="A")plaus-=10;if(hollowPercent>20)plaus-=10;if(tauFallbackCount>=4)plaus-=10;if(sigScore<45)plaus-=12;
   const conf=clamp(.45*sigScore+.35*consistency+.20*plaus,20,95);
-  const shouldRetry = (sigScore < 35) || (tapFeatures.length < 3) || (qSpread > 35 && sigScore < 50);
+  const shouldRetry = (sigScore < 35) || (tapFeatures.length < 3) || (validPeakCount < 2) || (fPeakSpread > 80) || (qSpread > 35 && sigScore < 50);
   const warnLowQuality = (conf < 58) || (sigScore < 55) || (qSpread > 18) || (tauFallbackCount >= 4);
   if(shouldRetry){showRetry(conf,sigLabel,sigScore,qSpread,tauSpread,tauFallbackCount);return;}
 
@@ -3382,6 +3452,7 @@ function analyzeSession(){
   if(clarityV250 && clarityV250.needRetest){
     scoreExplain += " • ควรเคาะซ้ำเพื่อยืนยันอีกครั้ง";
   }
+  if(cleanPeakStatus !== "ใช้ได้"){scoreExplain += ` • หมายเหตุ: ${cleanPeakStatus} ควรเคาะซ้ำเพื่อให้ผลแม่นยำขึ้น`;}
   if(warnLowQuality){scoreExplain += " • หมายเหตุ: สัญญาณรอบนี้ไม่นิ่ง ควรวัดซ้ำเพื่อยืนยัน";}
 
   setRipenessTheme(group);
@@ -3425,7 +3496,7 @@ function analyzeSession(){
   setBar("hollowBar",100-hollowPercent*2.5);
   setBar("confBar",conf);
   document.getElementById("featureList").innerHTML=`
-    <li>Q: ${Quse.toFixed(2)}</li><li>tau: ${tauUsed.toFixed(3)}</li><li>f_peak: ${avg.fPeak.toFixed(1)} Hz</li><li>f_mean: ${fMeanUse.toFixed(1)} Hz</li><li>ripeness_extra_note: ${ripenessExtraNoteV248 || "-"}</li><li>f_std: ${fStdUse.toFixed(1)} Hz</li><li>f_variance: ${fVarUse.toFixed(1)}</li><li>hollow_index: ${hollowIndexUse.toFixed(3)}</li><li>Brix raw: ${brixRaw.toFixed(2)} °Bx → calibrated: ${brix.toFixed(2)} °Bx</li><li>Firmness raw model: ${firmnessRaw.toFixed(1)} N → calibrated: ${firmness.toFixed(1)} N</li><li>Juice raw: ${juiceRaw.toFixed(1)}% → calibrated: ${juice.toFixed(1)}%</li><li>Hollow raw: ${hollowRawPercent.toFixed(1)}% → v22.5: ${hollowPercentOriginal.toFixed(1)}% → v22.6: ${hollowPercent.toFixed(1)}%</li><li>high_ratio: ${highRatioUse.toFixed(3)}</li><li>low_ratio: ${lowRatioUse.toFixed(3)}</li><li>flatness: ${flatnessUse.toFixed(3)}</li><li>rolloff85: ${rolloff85Use.toFixed(1)} Hz</li><li>peak count: ${peakCountUse.toFixed(0)}</li><li>low_ratio: ${avg.lowRatio.toFixed(3)}</li><li>flatness: ${avg.flatness.toFixed(3)}</li><li>Audio120 ripeness label: ${ripenessLabel120}</li><li>Audio120 group: ${ai120GroupV2311 || "-"}</li><li>Rule group: ${ruleGroupV2311}</li><li>Rule vs Audio120: ${groupAgreementV2311}</li><li>Ripeness engine: V1 avg f_peak 3 taps = ${avg.fPeak.toFixed(1)} Hz</li><li>Perfect ripe meter: ${ripeMeter.toFixed(0)}/100</li><li>คุณภาพสัญญาณ: ${sigLabel} (${sigScore.toFixed(0)}%)</li><li>Q spread: ${qSpread.toFixed(2)}</li><li>tau fallback: ${tauFallbackCount}/${NUM_TAPS}</li><li>สถานะผล: ${warnLowQuality ? "ใช้ได้แต่ควรวัดซ้ำเพื่อยืนยัน" : "ใช้ได้"}</li>`;
+    <li>Q: ${Quse.toFixed(2)}</li><li>tau: ${tauUsed.toFixed(3)}</li><li>f_peak: ${avg.fPeak.toFixed(1)} Hz</li><li>f_mean: ${fMeanUse.toFixed(1)} Hz</li><li>ripeness_extra_note: ${ripenessExtraNoteV248 || "-"}</li><li>f_std: ${fStdUse.toFixed(1)} Hz</li><li>f_variance: ${fVarUse.toFixed(1)}</li><li>hollow_index: ${hollowIndexUse.toFixed(3)}</li><li>Brix raw: ${brixRaw.toFixed(2)} °Bx → calibrated: ${brix.toFixed(2)} °Bx</li><li>Firmness raw model: ${firmnessRaw.toFixed(1)} N → calibrated: ${firmness.toFixed(1)} N</li><li>Juice raw: ${juiceRaw.toFixed(1)}% → calibrated: ${juice.toFixed(1)}%</li><li>Hollow raw: ${hollowRawPercent.toFixed(1)}% → v22.5: ${hollowPercentOriginal.toFixed(1)}% → v22.6: ${hollowPercent.toFixed(1)}%</li><li>high_ratio: ${highRatioUse.toFixed(3)}</li><li>low_ratio: ${lowRatioUse.toFixed(3)}</li><li>flatness: ${flatnessUse.toFixed(3)}</li><li>rolloff85: ${rolloff85Use.toFixed(1)} Hz</li><li>peak count: ${peakCountUse.toFixed(0)}</li><li>low_ratio: ${avg.lowRatio.toFixed(3)}</li><li>flatness: ${avg.flatness.toFixed(3)}</li><li>Audio120 ripeness label: ${ripenessLabel120}</li><li>Audio120 group: ${ai120GroupV2311 || "-"}</li><li>Rule group: ${ruleGroupV2311}</li><li>Rule vs Audio120: ${groupAgreementV2311}</li><li>Clean peak: ${cleanPeakStatus} • valid ${validPeakCount}/${NUM_TAPS} • prominence ${peakProminenceDb.toFixed(1)} dB • f spread ${fPeakSpread.toFixed(1)} Hz</li><li>Boundary band: ±${clarityV250.band} Hz</li><li>Ripeness engine: V1 avg f_peak 3 taps = ${avg.fPeak.toFixed(1)} Hz</li><li>Perfect ripe meter: ${ripeMeter.toFixed(0)}/100</li><li>คุณภาพสัญญาณ: ${sigLabel} (${sigScore.toFixed(0)}%)</li><li>Q spread: ${qSpread.toFixed(2)}</li><li>tau fallback: ${tauFallbackCount}/${NUM_TAPS}</li><li>สถานะผล: ${warnLowQuality ? "ใช้ได้แต่ควรวัดซ้ำเพื่อยืนยัน" : "ใช้ได้"}</li>`;
   saveHistory(ripe.label,brix,conf,melonScore,buyText,sigScore);
   speakSummaryAI({
     group,
@@ -3498,12 +3569,20 @@ function analyzeSession(){
     attack_time: Number(attackTimeUse.toFixed(4)),
     decay_ratio: Number(decayRatioUse.toFixed(4)),
 
+    valid_peak_count: validPeakCount,
+    peak_prominence_db: Number(peakProminenceDb.toFixed(2)),
+    f_peak_spread: Number(fPeakSpread.toFixed(2)),
+    clean_peak_status: cleanPeakStatus,
+    clean_peak_min_hz: CLEAN_PEAK_MIN_HZ_V2314,
+    clean_peak_max_hz: CLEAN_PEAK_MAX_HZ_V2314,
+    boundary_band_v2314: clarityV250 ? clarityV250.band : 20,
+
     signal_quality: sigLabel,
     signal_score: Number(sigScore.toFixed(1)),
     q_spread: Number(qSpread.toFixed(3)),
     tau_fallback_count: tauFallbackCount,
-    measurement_status: warnLowQuality ? "ควรวัดซ้ำ" : "ใช้ได้",
-    model_version: "v2.31.1_CriticalAccuracyPatch",
+    measurement_status: (warnLowQuality || cleanPeakStatus !== "ใช้ได้") ? "ควรวัดซ้ำ" : "ใช้ได้",
+    model_version: "v2.31.4_CleanPeakDetection",
     boundary_ripeness_zone: isBoundaryRipeness
   });
 
@@ -3924,6 +4003,11 @@ function showResultScreen(){
   if(home) home.hidden=true;
   if(result) result.hidden=false;
 }
+function resetToHome(){
+  resetAll();
+  showHomeScreen();
+  try{ window.scrollTo({top:0, behavior:"smooth"}); }catch(e){ window.scrollTo(0,0); }
+}
 async function startFromHome(){
   showResultScreen();
   resetAll();
@@ -3948,7 +4032,7 @@ function showHomePreview(){
 }
 
 document.getElementById("startBtn").addEventListener("click",startSession);
-document.getElementById("resetBtn").addEventListener("click",resetAll);
+document.getElementById("resetBtn").addEventListener("click",resetToHome);
 document.getElementById("shareBtn").addEventListener("click",shareResult);
 const tapAgainBtn=document.getElementById("tapAgainBtn"); if(tapAgainBtn) tapAgainBtn.addEventListener("click",startMeasureFromTop);
 const tapManualBtn=document.getElementById("tapManualBtn"); if(tapManualBtn) tapManualBtn.addEventListener("click",startMeasureFromTop);
