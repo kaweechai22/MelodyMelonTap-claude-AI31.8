@@ -3695,7 +3695,7 @@ function analyzeSession(){
     q_spread: Number(qSpread.toFixed(3)),
     tau_fallback_count: tauFallbackCount,
     measurement_status: (warnLowQuality || cleanPeakStatus !== "ใช้ได้") ? "ควรวัดซ้ำ" : "ใช้ได้",
-    model_version: "v2.31.8_KnockConsistency",
+    model_version: "v2.32.0_CSVUsedOnly",
     boundary_ripeness_zone: isBoundaryRipeness
   });
 
@@ -3985,7 +3985,34 @@ function saveMeasurementDebug(data){
 
 function buildMeasurementsCSV(){
   if(!measurementHistory.length) return "";
-  const headers = Object.keys(measurementHistory[0]);
+
+  // v2.32.0 CSV Used Only:
+  // Export เฉพาะค่าที่แอปใช้จริงในการแสดงผล/ตัดสินผล/ตรวจความน่าเชื่อถือ
+  // ไม่ดึง debug เก่าทุกคอลัมน์ออกมาให้รก
+  const headers = [
+    // ข้อมูลรอบวัดและผลลัพธ์ที่ผู้ใช้เห็น
+    "timestamp","sample_id","model_version",
+    "ripeness_app","ripeness_group","brix_app","firmness_app","juice_app","hollow_app",
+    "confidence_app","melon_score",
+
+    // ค่าที่ใช้ตัดสินระดับการสุกจริงใน v2.31.8+
+    "f_peak_used_v2318","f_peak_raw_1","f_peak_raw_2","f_peak_raw_3",
+    "best_pair_used_v2318","best_pair_spread_v2318","all_f_peak_spread_v2318",
+    "knock_consistency_score_v2318","knock_consistency_status_v2318",
+    "group_before_ripe_protection_v2317","ripe_protection_applied_v2317",
+
+    // ค่าคุณภาพสัญญาณ/clean peak ที่ใช้เตือนหรือประเมินความน่าเชื่อถือ
+    "signal_quality","signal_score","q_spread","tau_fallback_count",
+    "valid_peak_count","peak_prominence_db","f_peak_spread","clean_peak_status",
+    "clean_peak_fallback_count","boundary_band_v2314","measurement_status",
+
+    // acoustic features ที่โมเดล Brix/Firmness/Juice/Hollow ใช้จริง
+    "f_peak","Q","tau","f_mean","f_std","f_variance","hollow_index","bandwidth",
+    "high_ratio","low_ratio","flatness",
+    "band_50_100","band_100_150","band_150_300","band_300_600","band_600_1000",
+    "centroid","rolloff85","rolloff95","peak_count","peak2_ratio","attack_time","decay_ratio"
+  ];
+
   const rows = measurementHistory.map(r =>
     headers.map(h => {
       const v = r[h] ?? "";
@@ -4007,7 +4034,7 @@ function downloadMeasurementsCSV(showAlert=true){
 
   const a = document.createElement("a");
   a.href = url;
-  a.download = "MelodyMelonTap_v26_3_measurements.csv";
+  a.download = "MelodyMelonTap_v2_32_0_measurements.csv";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
