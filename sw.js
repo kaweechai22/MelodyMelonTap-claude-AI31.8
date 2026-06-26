@@ -1,4 +1,4 @@
-const CACHE_NAME = "melodymelontap-v2.31.5";
+const CACHE_NAME = "melodymelontap-v2.31.8";
 const APP_SHELL = [
   "./",
   "./index.html",
